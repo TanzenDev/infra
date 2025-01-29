@@ -25,7 +25,7 @@ variable "kubernetes_version" {
 variable "cluster_name" {
   description = "A name to provide for the Talos cluster"
   type        = string
-  default     = "example"
+  default     = "tanzen0"
 }
 
 variable "cluster_vip" {
@@ -44,6 +44,16 @@ variable "cluster_node_network" {
   description = "The IP network of the cluster nodes"
   type        = string
   default     = "10.17.3.0/24"
+}
+variable "cluster_node_gateway" {
+  description = "The IP gateway of the cluster nodes"
+  type        = string
+  default     = "10.17.3.1"
+}
+variable "cluster_node_host" {
+  description = "Hostname of the cluster host"
+  type        = string
+  default     = "tanzen2.tanzen.dev"
 }
 
 variable "cluster_node_network_first_controller_hostnum" {
@@ -73,13 +83,13 @@ variable "cluster_node_network_load_balancer_last_hostnum" {
 variable "cluster_node_domain" {
   description = "the DNS domain of the cluster nodes"
   type        = string
-  default     = "talos.test"
+  default     = "talos.dev"
 }
 
 variable "ingress_domain" {
   description = "the DNS domain of the ingress resources"
   type        = string
-  default     = "example.test"
+  default     = "tanzen.dev"
 }
 
 variable "controller_count" {
@@ -90,13 +100,69 @@ variable "controller_count" {
     error_message = "Must be 1 or more."
   }
 }
+variable "controller_disk_size" {
+  type    = number
+  default = 15
+  validation {
+    condition     = var.controller_disk_size >= 10
+    error_message = "Must be 10 or more."
+  }
+}
+variable "controller_cpu_count" {
+  type    = number
+  default = 2
+  validation {
+    condition     = var.controller_cpu_count >= 1
+    error_message = "Must be 1 or more."
+  }
+}
+variable "controller_memory" {
+  type    = number
+  default = 4
+  validation {
+    condition     = var.controller_memory >= 2
+    error_message = "Must be 4 or more."
+  }
+}
 
 variable "worker_count" {
   type    = number
   default = 1
   validation {
-    condition     = var.worker_count >= 1
+    condition     = var.worker_count >= 0
+    error_message = "Must be 0 or more."
+  }
+}
+variable "worker_disk_size" {
+  type    = number
+  default = 40
+  validation {
+    condition     = var.worker_disk_size >= 10
+    error_message = "Must be 10 or more."
+  }
+}
+variable "worker_disk0_size" {
+  type    = number
+  default = 190
+  validation {
+    condition     = var.worker_disk0_size >= 10
+    error_message = "Must be 10 or more."
+  }
+}
+variable "worker_cpu_count" {
+  type    = number
+  default = 6
+  validation {
+    condition     = var.worker_cpu_count >= 1
     error_message = "Must be 1 or more."
+  }
+}
+variable "worker_memory" {
+  type    = number
+  default = 30
+  validation {
+    condition     = var.worker_memory >= 4
+    error_message = "Must be 4 or more."
   }
 }
 
@@ -111,5 +177,10 @@ variable "talos_libvirt_base_volume_name" {
 
 variable "prefix" {
   type    = string
-  default = "terraform_talos_example"
+  default = "tanzen"
 }
+
+#variable "enable_privileged" {
+#  type    = bool
+#  default = true
+#}

@@ -4,6 +4,7 @@ resource "libvirt_network" "talos" {
   mode      = "nat"
   domain    = var.cluster_node_domain
   addresses = [var.cluster_node_network]
+  autostart = true
   dhcp {
     enabled = true
   }
@@ -19,7 +20,7 @@ resource "libvirt_volume" "controller" {
   name             = "${var.prefix}_c${count.index}.img"
   base_volume_name = var.talos_libvirt_base_volume_name
   format           = "qcow2"
-  size             = 40 * 1024 * 1024 * 1024 # 40GiB.
+  size             = var.controller_disk_size * 1024 * 1024 * 1024
 }
 
 # see https://github.com/dmacvicar/terraform-provider-libvirt/blob/v0.8.1/website/docs/r/volume.html.markdown
@@ -28,7 +29,7 @@ resource "libvirt_volume" "worker" {
   name             = "${var.prefix}_w${count.index}.img"
   base_volume_name = var.talos_libvirt_base_volume_name
   format           = "qcow2"
-  size             = 40 * 1024 * 1024 * 1024 # 40GiB.
+  size             = var.worker_disk_size * 1024 * 1024 * 1024
 }
 
 # see https://github.com/dmacvicar/terraform-provider-libvirt/blob/v0.8.1/website/docs/r/volume.html.markdown
@@ -36,7 +37,7 @@ resource "libvirt_volume" "worker_data0" {
   count  = var.worker_count
   name   = "${var.prefix}_w${count.index}d0.img"
   format = "qcow2"
-  size   = 32 * 1024 * 1024 * 1024 # 32GiB.
+  size   = var.worker_disk0_size * 1024 * 1024 * 1024 # 32GiB.
 }
 
 # see https://github.com/dmacvicar/terraform-provider-libvirt/blob/v0.8.1/website/docs/r/domain.html.markdown
@@ -45,12 +46,13 @@ resource "libvirt_domain" "controller" {
   name       = "${var.prefix}_${local.controller_nodes[count.index].name}"
   qemu_agent = false
   machine    = "q35"
-  firmware   = "/usr/share/OVMF/OVMF_CODE.fd"
+  firmware   = "/usr/share/OVMF/OVMF_CODE_4M.fd"
   cpu {
     mode = "host-passthrough"
   }
-  vcpu   = 4
-  memory = 4 * 1024
+  vcpu   = var.controller_cpu_count
+  memory = var.controller_memory * 1024
+  autostart = true
   video {
     type = "qxl"
   }
@@ -78,12 +80,13 @@ resource "libvirt_domain" "worker" {
   name       = "${var.prefix}_${local.worker_nodes[count.index].name}"
   qemu_agent = false
   machine    = "q35"
-  firmware   = "/usr/share/OVMF/OVMF_CODE.fd"
+  firmware   = "/usr/share/OVMF/OVMF_CODE_4M.fd"
   cpu {
     mode = "host-passthrough"
   }
-  vcpu   = 4
-  memory = 4 * 1024
+  vcpu   = var.worker_cpu_count
+  memory = var.worker_memory * 1024
+  autostart = true
   video {
     type = "qxl"
   }

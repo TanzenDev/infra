@@ -1,5 +1,12 @@
 #!/bin/bash
 set -euo pipefail
+set -x
+
+export KUBECONFIG=${ENV}/kubeconfig.yml
+export TALOSCONFIG=${ENV}/talosconfig.yml
+export SSL_CERT_FILE="${ROOT}/kubernetes-ingress-ca-crt.pem"
+
+plan=tfplan
 
 # the talos image builder.
 # NB this can be one of:
@@ -34,8 +41,8 @@ export CHECKPOINT_DISABLE='1'
 export TF_LOG='DEBUG' # TRACE, DEBUG, INFO, WARN or ERROR.
 export TF_LOG_PATH='terraform.log'
 
-export TALOSCONFIG=$PWD/talosconfig.yml
-export KUBECONFIG=$PWD/kubeconfig.yml
+export TALOSCONFIG=${ENV}/talosconfig.yml
+export KUBECONFIG=${ENV}/kubeconfig.yml
 
 function step {
   echo "### $* ###"
@@ -110,8 +117,8 @@ EOF
 }
 
 function build_talos_image__image_factory {
-  # see https://www.talos.dev/v1.9/learn-more/image-factory/
-  # see https://github.com/siderolabs/image-factory?tab=readme-ov-file#http-frontend-api
+    # see https://www.talos.dev/v1.9/learn-more/image-factory/
+    # see https://github.com/siderolabs/image-factory?tab=readme-ov-file#http-frontend-api
   local talos_version_tag="v$talos_version"
   rm -rf tmp/talos
   mkdir -p tmp/talos
@@ -180,23 +187,32 @@ function init {
   step 'build talos image'
   build_talos_image
   step 'terraform init'
-  terraform init -lockfile=readonly
+  time terraform init -lockfile=readonly
 }
 
 function plan {
   step 'terraform plan'
-  terraform plan -out=tfplan
+  time terraform plan -out=$plan
 }
 
 function apply {
-  step 'terraform apply'
-  terraform apply tfplan
-  terraform output -raw talosconfig >talosconfig.yml
-  terraform output -raw kubeconfig >kubeconfig.yml
-  health
-  piraeus-install
-  export-kubernetes-ingress-ca-crt
-  info
+    time terraform apply $plan
+    rm -rf ${ENV}/kubeconfig.yml
+    rm -rf ${ENV}/talosconfig.yml
+    terraform output -raw talosconfig > ${ENV}/talosconfig.yml
+    terraform output -raw kubeconfig > ${ENV}/kubeconfig.yml
+    chmod go-r ${ENV}/kubeconfig.yml
+    chmod go-r ${ENV}/talosconfig.yml
+    health
+#    kubectl taint nodes c0 node-role.kubernetes.io/control-plane:NoSchedule-
+#    piraeus-install
+    export-kubernetes-ingress-ca-crt
+    info
+}
+
+function plan-apply {
+    plan
+    apply
 }
 
 function health {
@@ -273,6 +289,8 @@ kind: StorageClass
 provisioner: linstor.csi.linbit.com
 metadata:
   name: linstor-lvm-r1
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
@@ -284,12 +302,22 @@ EOF
   step 'piraeus configure wait'
   kubectl wait pod --timeout=15m --for=condition=Ready -n piraeus-datastore -l app.kubernetes.io/name=piraeus-datastore
   kubectl wait LinstorCluster/linstor --timeout=15m --for=condition=Available
-  step 'piraeus create-device-pool'
-  local workers="$(terraform output -raw workers)"
-  local nodes=($(echo "$workers" | tr ',' ' '))
-  for ((n=0; n<${#nodes[@]}; ++n)); do
-    local node="w$((n))"
-    local wwn="$(printf "000000000000ab%02x" $n)"
+  create_device_pool
+}
+function create_device_pool {
+    step 'piraeus create-device-pool'
+    workers=( $( terraform output -raw workers | tr ',' ' ' ) )    
+    step "wait for worker storage"
+    for ((n=0; n<${#workers[@]}; ++n)); do
+	local node="w$((n))"
+	wait_node $node $n "000000000000ab%02x"
+    done
+}
+function wait_node {
+    node=$1
+    n=$2
+    wwn_format=$3
+    local wwn="$(printf "${wwn_format}" $n)"
     step "piraeus wait node $node"
     while ! kubectl linstor storage-pool list --node "$node" >/dev/null 2>&1; do sleep 3; done
     step "piraeus create-device-pool $node"
@@ -301,7 +329,6 @@ EOF
         "$node" \
         "/dev/disk/by-id/wwn-0x$wwn"
     fi
-  done
 }
 
 function piraeus-info {
@@ -312,34 +339,58 @@ function piraeus-info {
   step 'piraeus volume list'
   kubectl linstor volume list
 }
-
+function controllers {
+    terraform output -raw controllers
+}
+function workers {
+    terraform output -raw workers
+}
 function info {
-  local controllers="$(terraform output -raw controllers)"
-  local workers="$(terraform output -raw workers)"
-  local nodes=($(echo "$controllers,$workers" | tr ',' ' '))
-  step 'talos node installer image'
-  for n in "${nodes[@]}"; do
-    # NB there can be multiple machineconfigs in a machine. we only want to see
-    #    the ones with an id that looks like a version tag.
-    talosctl -n $n get machineconfigs -o json \
-      | jq -r 'select(.metadata.id | test("v\\d+")) | .spec' \
-      | yq -r '.machine.install.image' \
-      | sed -E "s,(.+),$n: \1,g"
-  done
-  step 'talos node os-release'
-  for n in "${nodes[@]}"; do
-    talosctl -n $n read /etc/os-release \
-      | sed -E "s,(.+),$n: \1,g"
-  done
-  step 'kubernetes nodes'
-  kubectl get nodes -o wide
-  piraeus-info
+    local controllers="$(terraform output -raw controllers)"
+    local workers="$(terraform output -raw workers)"
+    local nodes=($(echo "$controllers,$workers" | tr ',' ' '))
+    step 'talos node installer image'
+    for n in "${nodes[@]}"; do
+	# NB there can be multiple machineconfigs in a machine. we only want to see
+	#    the ones with an id that looks like a version tag.
+	talosctl -n $n get machineconfigs -o json \
+	    | jq -r 'select(.metadata.id | test("v\\d+")) | .spec' \
+	    | yq -r '.machine.install.image' \
+	    | sed -E "s,(.+),$n: \1,g"
+    done
+    step 'talos node os-release'
+    for n in "${nodes[@]}"; do
+	talosctl -n $n read /etc/os-release \
+	    | sed -E "s,(.+),$n: \1,g"
+    done
+    step 'kubernetes nodes and cluster info'
+    kubectl get nodes -o wide
+    kubectl cluster-info
+
+    step 'cilium info'
+    cilium status --wait
+    kubectl -n kube-system exec ds/cilium -- cilium-dbg status --verbose
+
+#    piraeus-info
+}
+
+function dash {
+    controllers="$(terraform output -raw controllers)"
+    workers="$(terraform output -raw workers)"
+    all="$controllers,$workers"
+    talosctl -n $all version
+    talosctl -n $all dashboard
 }
 
 function export-kubernetes-ingress-ca-crt {
-  kubectl get -n cert-manager secret/ingress-tls -o jsonpath='{.data.tls\.crt}' \
-    | base64 -d \
-    > kubernetes-ingress-ca-crt.pem
+    secret=ingress-tls
+    while ! kubectl get secret $secret 2>> /dev/null --namespace cert-manager; do
+	echo "Waiting for my $secret."
+	sleep 3
+    done
+    kubectl get -n cert-manager secret/$secret -o jsonpath='{.data.tls\.crt}' \
+	| base64 -d \
+		 > kubernetes-ingress-ca-crt.pem
 }
 
 function upgrade {
@@ -353,8 +404,9 @@ function upgrade {
 }
 
 function destroy {
-  terraform destroy -auto-approve
+  time terraform destroy -auto-approve
 }
+
 
 case $1 in
   update-talos-extensions)

@@ -13,6 +13,38 @@ locals {
   ]
   common_machine_config = {
     machine = {
+      time = {
+        servers = [
+          "time.cloudflare.com",
+	  "time.google.com"
+	]
+      }
+      kubelet = {
+	# NB https://www.talos.dev/v1.8/kubernetes-guides/configuration/deploy-metrics-server/
+	extraArgs = {
+	  rotate-server-certificates = true
+	}
+	extraMounts = [
+	  {
+	    destination = "/var/wren"
+	    type = "bind"
+	    source = "/var/wren"
+	    options = [
+	      "bind",
+	      "rshared",
+	      "rw"
+	    ]
+	  }
+	]
+	# NB: Required for rootless dev containers.
+	#     https://www.talos.dev/v1.9/kubernetes-guides/configuration/usernamespace/
+	extraConfig = {	  
+	  featureGates = {
+            UserNamespacesSupport = true
+            UserNamespacesPodSecurityStandards = true
+	  }
+	}
+      }
       # NB the install section changes are only applied after a talos upgrade
       #    (which we do not do). instead, its preferred to create a custom
       #    talos image, which is created in the installed state.
@@ -49,29 +81,57 @@ locals {
       network = {
         extraHostEntries = [
           {
-            ip = local.zot_cluster_ip
+            ip = var.cluster_node_gateway
             aliases = [
-              local.zot_cluster_domain,
+              var.cluster_node_host,
             ]
           }
         ]
       }
       registries = {
         config = {
-          (local.zot_cluster_host) = {
-            auth = {
-              username = "talos"
-              password = "talos"
-            }
-          }
+	  "oci.tanzen.dev:5000" = {
+            tls = {
+              insecureSkipVerify = true
+	    }
+	  },
+	  "${var.cluster_node_gateway}:5000" = {
+            tls = {
+              insecureSkipVerify = true
+	    }
+	  }
         }
         mirrors = {
-          (local.zot_cluster_host) = {
-            endpoints = [
-              local.zot_cluster_url,
-            ]
-            skipFallback = false
-          }
+	  "oci.tanzen.dev" = {
+	    endpoints = [
+	      "http://${var.cluster_node_gateway}:5000",
+	    ]
+#	    skipFallback = false
+	  },
+	  "docker.io" = {
+	    endpoints = [
+	      "http://${var.cluster_node_gateway}:5001",
+	    ]
+#	    skipFallback = false
+	  }, 
+	  "k8s.io" = {
+	    endpoints = [
+	      "http://${var.cluster_node_gateway}:5002",
+	    ]
+#	    skipFallback = false
+	  }, 
+	  "gcr.io" = {
+	    endpoints = [
+	      "http://${var.cluster_node_gateway}:5003",
+	    ]
+#	    skipFallback = false
+	  }, 
+	  "ghcr.io" = {
+	    endpoints = [
+	      "http://${var.cluster_node_gateway}:5004",
+	    ]
+#	    skipFallback = false
+	  }
         }
       }
     }
@@ -97,6 +157,11 @@ locals {
       proxy = {
         disabled = true
       }
+      # Metrics Server : https://www.talos.dev/v1.8/kubernetes-guides/configuration/deploy-metrics-server/
+      extraManifests = [
+	"https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/standalone-install.yaml",
+	"https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
+      ]
     }
   }
 }
@@ -136,6 +201,23 @@ data "talos_machine_configuration" "controller" {
     }),
     yamlencode({
       cluster = {
+	apiServer = {
+	  resources = {
+	    requests = {
+	      cpu = 0.5
+	      memory =  "750Mi"
+	    }
+	    limits = {
+	      cpu = 2
+	      memory = "4Gi"
+	    }
+	  }
+	  # NB: Required for rootless dev containers.
+	  #     https://www.talos.dev/v1.9/kubernetes-guides/configuration/usernamespace/
+	  extraArgs = {
+	    feature-gates = "UserNamespacesSupport=true,UserNamespacesPodSecurityStandards=true"
+	  }
+	}
         inlineManifests = [
           {
             name     = "spin"
@@ -175,28 +257,6 @@ data "talos_machine_configuration" "controller" {
           {
             name     = "reloader"
             contents = data.helm_template.reloader.manifest
-          },
-          {
-            name     = "zot"
-            contents = local.zot_manifest
-          },
-          {
-            name     = "gitea"
-            contents = local.gitea_manifest
-          },
-          {
-            name = "argocd"
-            contents = join("---\n", [
-              yamlencode({
-                apiVersion = "v1"
-                kind       = "Namespace"
-                metadata = {
-                  name = local.argocd_namespace
-                }
-              }),
-              data.helm_template.argocd.manifest,
-              "# Source argocd.tf\n${local.argocd_manifest}",
-            ])
           },
         ],
       },
@@ -267,6 +327,13 @@ resource "talos_machine_configuration_apply" "worker" {
   config_patches = [
     yamlencode({
       machine = {
+	disks = [{
+	  device = "/dev/disk/by-id/wwn-0x000000000000ab00"  # 000000000000ab00
+	  # local.worker_nodes[count.index].wwn
+          partitions = [{
+	    mountpoint = "/var/wren"
+	  }]
+	}]
         network = {
           hostname = local.worker_nodes[count.index].name
         }
@@ -286,4 +353,7 @@ resource "talos_machine_bootstrap" "talos" {
   depends_on = [
     talos_machine_configuration_apply.controller,
   ]
+  timeouts = {
+    create = "15m"
+  }
 }

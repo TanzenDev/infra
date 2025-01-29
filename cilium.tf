@@ -129,4 +129,8 @@ data "helm_template" "cilium" {
     name  = "hubble.ui.enabled"
     value = "true"
   }
+  set {
+     name = "operator.replicas"
+     value = 1
+   }
 }
