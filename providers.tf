@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/random"
       version = "3.6.3"
     }
+    time = {
+      source = "hashicorp/time"
+      version = "0.12.1"
+    }
     # see https://registry.terraform.io/providers/dmacvicar/libvirt
     # see https://github.com/dmacvicar/terraform-provider-libvirt
     libvirt = {

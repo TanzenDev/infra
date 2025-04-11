@@ -129,8 +129,54 @@ data "helm_template" "cilium" {
     name  = "hubble.ui.enabled"
     value = "true"
   }
+  ###################
+  set {
+    name  = "hubble-ui.ingress.enabled"
+    value = "true"
+  }
+  set {
+    name  = "hubble-ui.ingress.hosts[0]"
+    value = "${var.ingress_domain}"
+  }
+#  set {
+#    name  = "hubble-ui.ingress"
+#    value = yamlencode({
+#      enabled = "true"
+#      hosts = [	
+#	"${var.ingress_domain}"
+#      ]
+#    })
+#  }
+  ###################
   set {
      name = "operator.replicas"
      value = 1
-   }
+  }
+#
+#╷
+#│ Error: values don't meet the specifications of the schema(s) in the following chart(s):
+#│ cilium:
+#│ - cni.resources: Invalid type. Expected: object, given: string
+#│ 
+#│ 
+#│   with data.helm_template.cilium,
+#│   on cilium.tf line 55, in data "helm_template" "cilium":
+#│   55: data "helm_template" "cilium" {
+#│ 
+#╵
+#
+#  set {
+#    name = "cni.resources"
+#    type = "string"
+#    value = yamlencode({
+#      requests = yamlencode({
+#	cpu = "100m"
+#	memory = "10Mi"
+#      })
+#      limts = yamlencode({
+#	cpu = "175m"
+#	memory = "200Mi"
+#      })
+#    })
+#  }
 }

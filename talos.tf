@@ -26,9 +26,9 @@ locals {
 	}
 	extraMounts = [
 	  {
-	    destination = "/var/wren"
+	    destination = "/var/localstore"
 	    type = "bind"
-	    source = "/var/wren"
+	    source = "/var/localstore"
 	    options = [
 	      "bind",
 	      "rshared",
@@ -80,6 +80,33 @@ locals {
       }
       network = {
         extraHostEntries = [
+	  {
+            ip = var.cluster_node_gateway
+            aliases = [
+	      "k8sdash",
+	      "k8sdash.${var.ingress_domain}",
+	      "grafana",
+	      "grafana.${var.ingress_domain}",
+	      "prometheus",
+	      "prometheus.${var.ingress_domain}",
+	      "hubble",
+	      "hubble.${var.ingress_domain}",
+	      "graph",
+	      "graph.${var.ingress_domain}",
+	      "argocd",
+	      "argocd.${var.ingress_domain}",
+	      "minio",
+	      "minio.${var.ingress_domain}",
+	      "gitea",
+	      "gitea.${var.ingress_domain}",
+	      "regui",
+	      "regui.${var.ingress_domain}",
+	      "oci",
+	      "oci.${var.ingress_domain}",
+	      "cloud",
+              var.cluster_node_host
+            ]
+          },
           {
             ip = var.cluster_node_gateway
             aliases = [
@@ -90,24 +117,24 @@ locals {
       }
       registries = {
         config = {
-	  "oci.tanzen.dev:5000" = {
+	  "oci.${var.ingress_domain}" = {
             tls = {
               insecureSkipVerify = true
 	    }
 	  },
-	  "${var.cluster_node_gateway}:5000" = {
+	  "${var.cluster_node_gateway}" = {
             tls = {
               insecureSkipVerify = true
 	    }
 	  }
         }
         mirrors = {
-	  "oci.tanzen.dev" = {
-	    endpoints = [
-	      "http://${var.cluster_node_gateway}:5000",
-	    ]
+#	  "oci.${var.ingress_domain}" = {
+#	    endpoints = [
+#	      "https://${var.cluster_node_gateway}",
+#	    ]
 #	    skipFallback = false
-	  },
+#	  },
 	  "docker.io" = {
 	    endpoints = [
 	      "http://${var.cluster_node_gateway}:5001",
@@ -201,6 +228,9 @@ data "talos_machine_configuration" "controller" {
     }),
     yamlencode({
       cluster = {
+#	certSANs = [
+#	  "10.17.4.80"
+#	]
 	apiServer = {
 	  resources = {
 	    requests = {
@@ -214,8 +244,9 @@ data "talos_machine_configuration" "controller" {
 	  }
 	  # NB: Required for rootless dev containers.
 	  #     https://www.talos.dev/v1.9/kubernetes-guides/configuration/usernamespace/
+	  # NB: AuthorizedNodeWithSelectors: https://github.com/siderolabs/talos/issues/9980
 	  extraArgs = {
-	    feature-gates = "UserNamespacesSupport=true,UserNamespacesPodSecurityStandards=true"
+	    feature-gates = "UserNamespacesSupport=true,UserNamespacesPodSecurityStandards=true,AuthorizeNodeWithSelectors=false"
 	  }
 	}
         inlineManifests = [
@@ -331,7 +362,7 @@ resource "talos_machine_configuration_apply" "worker" {
 	  device = "/dev/disk/by-id/wwn-0x000000000000ab00"  # 000000000000ab00
 	  # local.worker_nodes[count.index].wwn
           partitions = [{
-	    mountpoint = "/var/wren"
+	    mountpoint = "/var/localstore"
 	  }]
 	}]
         network = {
@@ -354,6 +385,15 @@ resource "talos_machine_bootstrap" "talos" {
     talos_machine_configuration_apply.controller,
   ]
   timeouts = {
-    create = "15m"
+    create = "10m"
   }
 }
+
+#resource "time_sleep" "wait_for_cluster" {
+#  depends_on = [
+#    talos_machine_configuration_apply.controller,
+#    talos_machine_configuration_apply.worker,
+#    talos_machine_bootstrap.talos
+#  ]
+#  create_duration = "10m"
+#}

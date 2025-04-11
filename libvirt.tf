@@ -14,10 +14,20 @@ resource "libvirt_network" "talos" {
   }
 }
 
+# see https://registry.terraform.io/providers/dmacvicar/libvirt/0.8.1/docs/resources/pool
+#resource "libvirt_pool" "tanzen" {
+#  name = "tanzen"
+#  type = "dir"
+#  target {
+#    path = "/var/lib/libvirt/tanzen"
+#  }
+#}
+
 # see https://github.com/dmacvicar/terraform-provider-libvirt/blob/v0.8.1/website/docs/r/volume.html.markdown
 resource "libvirt_volume" "controller" {
   count            = var.controller_count
   name             = "${var.prefix}_c${count.index}.img"
+#  pool             = libvirt_pool.tanzen.name
   base_volume_name = var.talos_libvirt_base_volume_name
   format           = "qcow2"
   size             = var.controller_disk_size * 1024 * 1024 * 1024
@@ -27,6 +37,7 @@ resource "libvirt_volume" "controller" {
 resource "libvirt_volume" "worker" {
   count            = var.worker_count
   name             = "${var.prefix}_w${count.index}.img"
+#  pool             = libvirt_pool.tanzen.name
   base_volume_name = var.talos_libvirt_base_volume_name
   format           = "qcow2"
   size             = var.worker_disk_size * 1024 * 1024 * 1024
@@ -36,6 +47,7 @@ resource "libvirt_volume" "worker" {
 resource "libvirt_volume" "worker_data0" {
   count  = var.worker_count
   name   = "${var.prefix}_w${count.index}d0.img"
+#  pool   = libvirt_pool.tanzen.name
   format = "qcow2"
   size   = var.worker_disk0_size * 1024 * 1024 * 1024 # 32GiB.
 }

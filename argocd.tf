@@ -25,7 +25,7 @@ locals {
             "Kubernetes",
           ]
         }
-        commonName = "Argo CD Server"
+        commonName = "argocd"
         dnsNames = [
           local.argocd_domain,
         ]

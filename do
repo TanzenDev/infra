@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-set -x
+#set -x
 
 export KUBECONFIG=${ENV}/kubeconfig.yml
 export TALOSCONFIG=${ENV}/talosconfig.yml
@@ -45,7 +45,7 @@ export TALOSCONFIG=${ENV}/talosconfig.yml
 export KUBECONFIG=${ENV}/kubeconfig.yml
 
 function step {
-  echo "### $* ###"
+    echo "🥑 $*  "
 }
 
 function update-talos-extension {
@@ -74,13 +74,17 @@ function update-talos-extensions {
 }
 
 function build_talos_image__imager {
-  # see https://www.talos.dev/v1.9/talos-guides/install/boot-assets/
-  # see https://www.talos.dev/v1.9/advanced/metal-network-configuration/
-  # see Profile type at https://github.com/siderolabs/talos/blob/v1.9.1/pkg/imager/profile/profile.go#L24-L47
-  local talos_version_tag="v$talos_version"
-  rm -rf tmp/talos
-  mkdir -p tmp/talos
-  cat >"tmp/talos/talos-$talos_version.yml" <<EOF
+    # see https://www.talos.dev/v1.9/talos-guides/install/boot-assets/
+    # see https://www.talos.dev/v1.9/advanced/metal-network-configuration/
+    # see Profile type at https://github.com/siderolabs/talos/blob/v1.9.1/pkg/imager/profile/profile.go#L24-L47
+
+    if [[ -f $PWD/tmp/talos-1.9.1.qcow2 ]]; then
+	return
+    fi
+    local talos_version_tag="v$talos_version"
+    rm -rf tmp/talos
+    mkdir -p tmp/talos
+    cat >"tmp/talos/talos-$talos_version.yml" <<EOF
 arch: amd64
 platform: nocloud
 secureboot: false
@@ -167,16 +171,20 @@ function build_talos_image {
       exit 1
       ;;
   esac
+  local pool=default #tanzen
+  local qemu="-c qemu:///system"
   echo "converting image to the qcow2 format..."
   local talos_libvirt_base_volume_name="talos-$talos_version.qcow2"
   qemu-img convert -O qcow2 tmp/talos/nocloud-amd64.raw tmp/talos/$talos_libvirt_base_volume_name
   qemu-img info tmp/talos/$talos_libvirt_base_volume_name
-  if [ -n "$(virsh vol-list default | grep $talos_libvirt_base_volume_name)" ]; then
-    virsh vol-delete --pool default $talos_libvirt_base_volume_name
+  if [ -n "$(virsh $qemu vol-list ${pool} | grep $talos_libvirt_base_volume_name)" ]; then
+      #    virsh vol-delete --pool default $talos_libvirt_base_volume_name
+      virsh $qemu vol-delete --pool ${pool} $talos_libvirt_base_volume_name
   fi
   echo "uploading image to libvirt..."
-  virsh vol-create-as default $talos_libvirt_base_volume_name 10M
-  virsh vol-upload --pool default $talos_libvirt_base_volume_name tmp/talos/$talos_libvirt_base_volume_name
+  virsh $qemu vol-create-as ${pool} $talos_libvirt_base_volume_name 10M
+  #  virsh vol-upload --pool default $talos_libvirt_base_volume_name tmp/talos/$talos_libvirt_base_volume_name
+  virsh $qemu vol-upload --pool ${pool} $talos_libvirt_base_volume_name tmp/talos/$talos_libvirt_base_volume_name
   cat >terraform.tfvars <<EOF
 talos_version                  = "$talos_version"
 talos_libvirt_base_volume_name = "$talos_libvirt_base_volume_name"
@@ -184,15 +192,21 @@ EOF
 }
 
 function init {
-  step 'build talos image'
-  build_talos_image
-  step 'terraform init'
-  time terraform init -lockfile=readonly
+    if [[ "$( virsh vol-list default | \
+                grep -c talos-1.9.1.qcow2)" -gt 0 ]]; then
+	echo using cached talos image.
+	return
+    fi
+
+    step 'build talos image'
+    build_talos_image || true
+    step 'initialize talos kubernetes terraform model'
+    time terraform init -lockfile=readonly
 }
 
 function plan {
-  step 'terraform plan'
-  time terraform plan -out=$plan
+  step "planning kubernetes cluster. output in ${INFRA}/plan.log"
+  time terraform plan -out=$plan > plan.log
 }
 
 function apply {
@@ -216,11 +230,106 @@ function plan-apply {
 }
 
 function health {
+    step health check
+    
+    local controllers="$(terraform output -raw controllers)"
+    local c0="$(echo $controllers | cut -d , -f 1)"
+    step "boostrapping talos control plane: $c0"
+    talosctl bootstrap -n $c0 || true
+  
+    step cluster health
+    set +Eeuo pipefail
+    
+    local pause=10
+    local cycles_per_min=$(( 60 / pause ))
+    local minutes=30
+    local retries=$(( cycles_per_min * minutes ))
+    local cycle=0
+    local ready=0
+    local live=0
+
+    step waiting for control plane to be reachable
+    while [[ true ]]; do
+	kubectl get --raw='/readyz?verbose' > /dev/null 2>&1
+	if [[ $? -eq 0 ]]; then
+	    break
+	fi
+	sleep 3
+	printf "."
+    done
+    while [[ true ]]; do
+	# NB: https://stackoverflow.com/questions/73407661/componentstatus-is-deprecated-what-to-use-then
+	# get cluster service statuses, count the number of status lines that end in "ok".
+	# if all services report ok, proceed. Otherwise show non-ok statuses and keep waiting.
+	# first for ready status
+	if [[ $( kubectl get --raw='/readyz?verbose' | grep + | egrep -vc  "ok$" ) -gt 0 ]]; then
+	    echo
+	    echo some control plane components are not ready:
+	    kubectl get --raw='/readyz?verbose' | grep -v " ok"
+	    ready=0
+	else
+	    echo all control plane components reporting ready status
+	    ready=1
+	fi
+	# then for live status.
+	if [[ $( kubectl get --raw='/livez?verbose' | grep + | egrep -vc  "ok$" ) -gt 0 ]]; then
+	    echo
+	    echo some control plane components are not live:
+	    kubectl get --raw='/livez?verbose' | grep -v " ok"
+	    live=0
+	else
+	    echo all control plane components reporting live status
+	    live=1
+	fi
+	if [[ ( $ready -eq 1 && $live -eq 1 ) || ( $cycle -ge $retries ) ]]; then
+	    echo cluster health check succeeded.
+	    break
+	fi
+	cycle=$(( cycle + 1 ))
+	print "."
+	sleep $pause
+    done
+    set -Eeuo pipefail
+    echo
+}
+
+function health0 {
+    # This times out unpredictably with the error below.
+    # But the cluster is up.
+    # Switching approaches until developing a reliable alternative.
+    c() {
+	[STDERR] [STDOUT] 🥑 talosctl health  
+[STDERR] [STDOUT] waiting for cluster to be healthy.
+[STDERR] [STDERR] discovered nodes: ["10.17.4.80" "10.17.4.90"]
+[STDERR] [STDERR] waiting for etcd to be healthy: ...
+[STDERR] [STDERR] waiting for etcd to be healthy: 1 error occurred:
+[STDERR] [STDERR] 	* 10.17.4.80: service "etcd" not in expected state "Running": current state [Preparing] Running pre state
+[STDERR] [STDERR] waiting for etcd to be healthy: 1 error occurred:
+[STDERR] [STDERR] 	* 10.17.4.80: service is not healthy: etcd
+[STDERR] [STDERR] waiting for etcd to be healthy: OK
+[STDERR] [STDERR] waiting for etcd members to be consistent across nodes: ...
+[STDERR] [STDERR] waiting for etcd members to be consistent across nodes: OK
+[STDERR] [STDERR] waiting for etcd members to be control plane nodes: ...
+[STDERR] [STDERR] waiting for etcd members to be control plane nodes: OK
+[STDERR] [STDERR] waiting for apid to be ready: ...
+[STDERR] [STDERR] waiting for apid to be ready: 1 error occurred:
+[STDERR] [STDERR] 	* 10.17.4.90: rpc error: code = Unavailable desc = connection error: desc = "transport: authentication handshake failed: tls: failed to verify certificate
+: x509: certificate signed by unknown authority"
+[STDERR] [STDERR] healthcheck error: rpc error: code = DeadlineExceeded desc = context deadline exceeded
+
+    }
+    
   step 'talosctl health'
   local controllers="$(terraform output -raw controllers)"
   local workers="$(terraform output -raw workers)"
   local c0="$(echo $controllers | cut -d , -f 1)"
-  talosctl -e $c0 -n $c0 \
+  local timeout=10m0s
+  
+  step "boostrapping talos control plane: $c0"
+  talosctl bootstrap -n $c0 || true
+  
+  echo "waiting for cluster to be healthy."
+  talosctl -e $c0 -n $c0 --wait-timeout $timeout \
     health \
     --control-plane-nodes $controllers \
     --worker-nodes $workers
@@ -384,10 +493,12 @@ function dash {
 
 function export-kubernetes-ingress-ca-crt {
     secret=ingress-tls
+    printf "Waiting for secret: $secret."
     while ! kubectl get secret $secret 2>> /dev/null --namespace cert-manager; do
-	echo "Waiting for my $secret."
+	printf "-"
 	sleep 3
     done
+    echo
     kubectl get -n cert-manager secret/$secret -o jsonpath='{.data.tls\.crt}' \
 	| base64 -d \
 		 > kubernetes-ingress-ca-crt.pem
@@ -406,7 +517,6 @@ function upgrade {
 function destroy {
   time terraform destroy -auto-approve
 }
-
 
 case $1 in
   update-talos-extensions)

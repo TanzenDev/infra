@@ -25,30 +25,30 @@ variable "kubernetes_version" {
 variable "cluster_name" {
   description = "A name to provide for the Talos cluster"
   type        = string
-  default     = "tanzen0"
+  default     = "cluster0"
 }
 
 variable "cluster_vip" {
   description = "The virtual IP (VIP) address of the Kubernetes API server. Ensure it is synchronized with the 'cluster_endpoint' variable."
   type        = string
-  default     = "10.17.3.9"
+  default     = "10.17.4.9"
 }
 
 variable "cluster_endpoint" {
   description = "The virtual IP (VIP) endpoint of the Kubernetes API server. Ensure it is synchronized with the 'cluster_vip' variable."
   type        = string
-  default     = "https://10.17.3.9:6443"
+  default     = "https://10.17.4.9:6443"
 }
 
 variable "cluster_node_network" {
   description = "The IP network of the cluster nodes"
   type        = string
-  default     = "10.17.3.0/24"
+  default     = "10.17.4.0/24"
 }
 variable "cluster_node_gateway" {
   description = "The IP gateway of the cluster nodes"
   type        = string
-  default     = "10.17.3.1"
+  default     = "10.17.4.1"
 }
 variable "cluster_node_host" {
   description = "Hostname of the cluster host"
@@ -83,7 +83,7 @@ variable "cluster_node_network_load_balancer_last_hostnum" {
 variable "cluster_node_domain" {
   description = "the DNS domain of the cluster nodes"
   type        = string
-  default     = "talos.dev"
+  default     = "tanzen.one"
 }
 
 variable "ingress_domain" {
